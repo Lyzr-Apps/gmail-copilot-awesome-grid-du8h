@@ -96,6 +96,8 @@ interface AppSettings {
   questionDetection: boolean
 }
 
+type GmailConnectionStatus = 'unknown' | 'connecting' | 'connected' | 'error'
+
 // ---- Sample Data ----
 const SAMPLE_EMAILS: EmailItem[] = [
   { id: '1', threadId: 'thread_001', subject: 'Q4 Revenue Projections Review', sender: 'Sarah Chen <sarah.chen@acmecorp.com>', snippet: 'Hi team, I have compiled the Q4 revenue projections and would love to get your feedback before...', timestamp: '2:34 PM', isUnread: true },
@@ -287,6 +289,11 @@ export default function Page() {
   const [scheduleLoading, setScheduleLoading] = useState(false)
   const [scheduleActionLoading, setScheduleActionLoading] = useState(false)
 
+  // Gmail connection state
+  const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus>('unknown')
+  const [gmailConnecting, setGmailConnecting] = useState(false)
+  const [gmailError, setGmailError] = useState<string | null>(null)
+
   // Status & Agent
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null)
@@ -366,6 +373,9 @@ export default function Page() {
       agentActivity.setProcessing(false)
       const data = parseAgentResult(result)
       if (data) {
+        // Mark Gmail as connected since agent call succeeded
+        setGmailStatus('connected')
+        setGmailError(null)
         if (data?.message) {
           setStatusMessage({ text: data.message, type: 'info' })
         }
@@ -375,11 +385,11 @@ export default function Page() {
           setThreadContent(data.thread_summary ?? data.draft_body ?? data.message ?? '')
         }
       } else {
-        setStatusMessage({ text: result?.error ?? 'Failed to fetch emails', type: 'error' })
+        setStatusMessage({ text: result?.error ?? 'Failed to fetch emails. You may need to connect Gmail first via Settings.', type: 'error' })
       }
     } catch (err) {
       agentActivity.setProcessing(false)
-      setStatusMessage({ text: 'Error fetching emails', type: 'error' })
+      setStatusMessage({ text: 'Error fetching emails. Please check your Gmail connection in Settings.', type: 'error' })
     }
     setFetchingEmails(false)
     setActiveAgentId(null)
@@ -547,6 +557,9 @@ export default function Page() {
       agentActivity.setProcessing(false)
       const data = parseAgentResult(result)
       if (data) {
+        // Mark Gmail as connected since agent call succeeded
+        setGmailStatus('connected')
+        setGmailError(null)
         const items = Array.isArray(data?.follow_up_items) ? data.follow_up_items : []
         setFollowUpItems(items)
         setFollowUpResponse({
@@ -674,6 +687,44 @@ export default function Page() {
     setScheduleActionLoading(false)
   }
 
+  // ---- Gmail Connection handler ----
+  const handleConnectGmail = async () => {
+    setGmailConnecting(true)
+    setGmailError(null)
+    setGmailStatus('connecting')
+    setStatusMessage({ text: 'Initiating Gmail connection via Composio...', type: 'info' })
+    try {
+      const result = await callAIAgent(
+        'Connect to my Gmail account and verify the connection is working. List the most recent email subject as confirmation.',
+        COPILOT_AGENT_ID,
+        { session_id: generateSessionId() }
+      )
+      const data = parseAgentResult(result)
+      if (data || result?.success) {
+        setGmailStatus('connected')
+        setGmailError(null)
+        setStatusMessage({ text: data?.message ?? 'Gmail connected successfully', type: 'success' })
+      } else {
+        // Check if it's an auth redirect scenario (Composio may return a URL)
+        const errorMsg = result?.error ?? result?.response?.message ?? ''
+        if (errorMsg.toLowerCase().includes('auth') || errorMsg.toLowerCase().includes('connect') || errorMsg.toLowerCase().includes('redirect')) {
+          setGmailStatus('unknown')
+          setGmailError('Gmail authorization required. The agent will redirect you to authorize access. Please try again.')
+        } else {
+          setGmailStatus('error')
+          setGmailError(errorMsg || 'Failed to connect. Please try again.')
+        }
+        setStatusMessage({ text: errorMsg || 'Gmail connection requires authorization', type: 'error' })
+      }
+    } catch (err) {
+      setGmailStatus('error')
+      const msg = err instanceof Error ? err.message : 'Connection failed'
+      setGmailError(msg)
+      setStatusMessage({ text: msg, type: 'error' })
+    }
+    setGmailConnecting(false)
+  }
+
   // ---- Derived data ----
   const filteredFollowUps = followUpItems.filter(item => {
     if (categoryFilter === 'all') return true
@@ -757,10 +808,21 @@ export default function Page() {
                     {fetchingEmails ? (
                       <EmailSkeleton />
                     ) : displayEmails.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+                      <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                         <HiOutlineInboxStack className="h-12 w-12 text-muted-foreground/40 mb-3" />
                         <p className="text-sm font-medium text-muted-foreground">No emails loaded</p>
-                        <p className="text-xs text-muted-foreground/70 mt-1">Click "Fetch Emails" to load your inbox, or turn on Sample Data</p>
+                        {gmailStatus !== 'connected' ? (
+                          <div className="mt-3 space-y-2">
+                            <p className="text-xs text-muted-foreground/70">Connect your Gmail account first to fetch emails</p>
+                            <Button size="sm" className="rounded-[0.875rem]" onClick={handleConnectGmail} disabled={gmailConnecting}>
+                              {gmailConnecting ? <FiLoader className="h-3 w-3 animate-spin mr-1" /> : <HiOutlineEnvelope className="h-3 w-3 mr-1" />}
+                              {gmailConnecting ? 'Connecting...' : 'Connect Gmail'}
+                            </Button>
+                            <p className="text-xs text-muted-foreground/50 mt-1">Or turn on "Sample Data" in the header to preview the app</p>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground/70 mt-1">Click "Fetch Emails" to load your inbox, or turn on Sample Data</p>
+                        )}
                       </div>
                     ) : (
                       <div className="divide-y divide-border">
@@ -1026,7 +1088,17 @@ export default function Page() {
                     <CardContent className="py-16 text-center">
                       <HiOutlineBell className="h-12 w-12 mx-auto text-muted-foreground/30 mb-3" />
                       <p className="text-lg font-medium text-muted-foreground">No follow-ups found</p>
-                      <p className="text-sm text-muted-foreground/70 mt-1">Click "Scan Now" to check your inbox for emails needing follow-up</p>
+                      {gmailStatus !== 'connected' ? (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-sm text-muted-foreground/70">Connect your Gmail account first to scan for follow-ups</p>
+                          <Button size="sm" className="rounded-[0.875rem]" onClick={handleConnectGmail} disabled={gmailConnecting}>
+                            {gmailConnecting ? <FiLoader className="h-3 w-3 animate-spin mr-1" /> : <HiOutlineEnvelope className="h-3 w-3 mr-1" />}
+                            {gmailConnecting ? 'Connecting...' : 'Connect Gmail'}
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground/70 mt-1">Click "Scan Now" to check your inbox for emails needing follow-up</p>
+                      )}
                     </CardContent>
                   </Card>
                 ) : (
@@ -1139,13 +1211,91 @@ export default function Page() {
                     <CardTitle className="flex items-center gap-2 text-base">
                       <HiOutlineSignal className="h-5 w-5" /> Gmail Connection
                     </CardTitle>
+                    <CardDescription>Connect your Gmail account to enable email fetching, drafting, and sending</CardDescription>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="space-y-4">
+                    {/* Connection Status */}
                     <div className="flex items-center gap-3">
-                      <Badge className="bg-green-100 text-green-800 border-green-200 rounded-full">
-                        <FiCheck className="h-3 w-3 mr-1" /> Connected
-                      </Badge>
-                      <span className="text-sm text-muted-foreground">Gmail API is connected and ready</span>
+                      {gmailStatus === 'connected' ? (
+                        <Badge className="bg-green-100 text-green-800 border-green-200 rounded-full">
+                          <FiCheck className="h-3 w-3 mr-1" /> Connected
+                        </Badge>
+                      ) : gmailStatus === 'connecting' ? (
+                        <Badge className="bg-blue-100 text-blue-800 border-blue-200 rounded-full">
+                          <FiLoader className="h-3 w-3 mr-1 animate-spin" /> Connecting...
+                        </Badge>
+                      ) : gmailStatus === 'error' ? (
+                        <Badge className="bg-red-100 text-red-800 border-red-200 rounded-full">
+                          <FiX className="h-3 w-3 mr-1" /> Error
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-amber-100 text-amber-800 border-amber-200 rounded-full">
+                          <HiOutlineSignal className="h-3 w-3 mr-1" /> Not Connected
+                        </Badge>
+                      )}
+                      <span className="text-sm text-muted-foreground">
+                        {gmailStatus === 'connected' ? 'Gmail API is connected and ready' :
+                         gmailStatus === 'connecting' ? 'Establishing Gmail connection...' :
+                         gmailStatus === 'error' ? 'Connection failed' :
+                         'Click below to connect your Gmail account'}
+                      </span>
+                    </div>
+
+                    {/* Error message */}
+                    {gmailError && (
+                      <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+                        {gmailError}
+                      </div>
+                    )}
+
+                    {/* Connection instructions */}
+                    {gmailStatus !== 'connected' && (
+                      <div className="bg-secondary/50 rounded-[0.875rem] p-4 space-y-3">
+                        <p className="text-sm font-medium text-foreground">How Gmail connection works:</p>
+                        <div className="space-y-2">
+                          <div className="flex items-start gap-2">
+                            <div className="h-5 w-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs flex-shrink-0 mt-0.5">1</div>
+                            <p className="text-sm text-muted-foreground">Click "Connect Gmail" below to initiate the connection</p>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <div className="h-5 w-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs flex-shrink-0 mt-0.5">2</div>
+                            <p className="text-sm text-muted-foreground">If prompted, authorize Gmail access in the popup window</p>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <div className="h-5 w-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs flex-shrink-0 mt-0.5">3</div>
+                            <p className="text-sm text-muted-foreground">Once authorized, all features (Fetch, Copilot, Follow-Up) will work automatically</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Connect / Reconnect Button */}
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={handleConnectGmail}
+                        disabled={gmailConnecting}
+                        className="rounded-[0.875rem]"
+                        variant={gmailStatus === 'connected' ? 'outline' : 'default'}
+                      >
+                        {gmailConnecting ? (
+                          <FiLoader className="h-4 w-4 animate-spin mr-2" />
+                        ) : gmailStatus === 'connected' ? (
+                          <FiRefreshCw className="h-4 w-4 mr-2" />
+                        ) : (
+                          <HiOutlineEnvelope className="h-4 w-4 mr-2" />
+                        )}
+                        {gmailStatus === 'connected' ? 'Reconnect Gmail' : gmailConnecting ? 'Connecting...' : 'Connect Gmail'}
+                      </Button>
+                      {gmailStatus === 'connected' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="rounded-[0.875rem]"
+                          onClick={() => { setActiveTab('inbox'); }}
+                        >
+                          <HiOutlineInboxStack className="h-4 w-4 mr-1" /> Go to Inbox
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
