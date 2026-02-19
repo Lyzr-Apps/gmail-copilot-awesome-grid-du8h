@@ -371,6 +371,19 @@ export default function Page() {
       const msg = searchQuery ? `Search my Gmail inbox for: ${searchQuery}` : 'Fetch my recent emails from Gmail'
       const result = await callAIAgent(msg, COPILOT_AGENT_ID, { session_id: sessionId })
       agentActivity.setProcessing(false)
+
+      // Check for auth URLs in the response
+      const rawStr = JSON.stringify(result ?? '')
+      const authUrl = extractAuthUrl(rawStr)
+      if (authUrl) {
+        setGmailStatus('unknown')
+        setStatusMessage({ text: 'Gmail authorization needed. Opening authorization window...', type: 'info' })
+        window.open(authUrl, '_blank', 'noopener,noreferrer')
+        setFetchingEmails(false)
+        setActiveAgentId(null)
+        return
+      }
+
       const data = parseAgentResult(result)
       if (data) {
         // Mark Gmail as connected since agent call succeeded
@@ -555,6 +568,19 @@ export default function Page() {
         { session_id: sessionId }
       )
       agentActivity.setProcessing(false)
+
+      // Check for auth URLs in the response
+      const rawScanStr = JSON.stringify(result ?? '')
+      const scanAuthUrl = extractAuthUrl(rawScanStr)
+      if (scanAuthUrl) {
+        setGmailStatus('unknown')
+        setStatusMessage({ text: 'Gmail authorization needed. Opening authorization window...', type: 'info' })
+        window.open(scanAuthUrl, '_blank', 'noopener,noreferrer')
+        setScanningFollowUps(false)
+        setActiveAgentId(null)
+        return
+      }
+
       const data = parseAgentResult(result)
       if (data) {
         // Mark Gmail as connected since agent call succeeded
@@ -688,33 +714,84 @@ export default function Page() {
   }
 
   // ---- Gmail Connection handler ----
+  // Helper to find auth/composio URLs in agent responses
+  const extractAuthUrl = (text: string): string | null => {
+    if (!text) return null
+    // Match URLs that are likely Composio or Google OAuth auth flows
+    const urlRegex = /(https?:\/\/[^\s"'<>]+(?:composio|accounts\.google\.com|oauth|auth|connect|redirect)[^\s"'<>]*)/gi
+    const match = text.match(urlRegex)
+    if (match && match.length > 0) return match[0]
+    // Also check for any generic URL that might be a redirect
+    const genericUrlRegex = /(https?:\/\/[^\s"'<>]{20,})/gi
+    const genericMatch = text.match(genericUrlRegex)
+    if (genericMatch && genericMatch.length > 0) {
+      // Check if it looks like an auth URL
+      const url = genericMatch[0].toLowerCase()
+      if (url.includes('auth') || url.includes('oauth') || url.includes('connect') || url.includes('composio') || url.includes('google.com')) {
+        return genericMatch[0]
+      }
+    }
+    return null
+  }
+
   const handleConnectGmail = async () => {
     setGmailConnecting(true)
     setGmailError(null)
     setGmailStatus('connecting')
-    setStatusMessage({ text: 'Initiating Gmail connection via Composio...', type: 'info' })
+    setStatusMessage({ text: 'Initiating Gmail connection...', type: 'info' })
     try {
       const result = await callAIAgent(
-        'Connect to my Gmail account and verify the connection is working. List the most recent email subject as confirmation.',
+        'Fetch my most recent email from Gmail inbox to verify the connection is working.',
         COPILOT_AGENT_ID,
         { session_id: generateSessionId() }
       )
+
+      // Deep-search the entire response for auth URLs
+      const rawStr = JSON.stringify(result ?? '')
+      const authUrl = extractAuthUrl(rawStr)
+
+      if (authUrl) {
+        // Agent returned an auth URL - open it for the user
+        setGmailStatus('unknown')
+        setGmailError(null)
+        setStatusMessage({ text: 'Opening Gmail authorization window. Please authorize access, then click "Connect Gmail" again.', type: 'info' })
+        window.open(authUrl, '_blank', 'noopener,noreferrer')
+        setGmailConnecting(false)
+        return
+      }
+
       const data = parseAgentResult(result)
       if (data || result?.success) {
-        setGmailStatus('connected')
-        setGmailError(null)
-        setStatusMessage({ text: data?.message ?? 'Gmail connected successfully', type: 'success' })
-      } else {
-        // Check if it's an auth redirect scenario (Composio may return a URL)
-        const errorMsg = result?.error ?? result?.response?.message ?? ''
-        if (errorMsg.toLowerCase().includes('auth') || errorMsg.toLowerCase().includes('connect') || errorMsg.toLowerCase().includes('redirect')) {
+        // Check if the response message itself mentions needing auth
+        const msgText = (data?.message ?? data?.text ?? result?.response?.message ?? '').toLowerCase()
+        if (msgText.includes('authenticate') || msgText.includes('authorize') || msgText.includes('permission') || msgText.includes('connect your') || msgText.includes('not connected')) {
           setGmailStatus('unknown')
-          setGmailError('Gmail authorization required. The agent will redirect you to authorize access. Please try again.')
+          setGmailError('Gmail authorization may be needed. The agent reported: ' + (data?.message ?? data?.text ?? 'authorization required'))
+          setStatusMessage({ text: 'Gmail needs authorization. Check the message below.', type: 'info' })
+        } else {
+          setGmailStatus('connected')
+          setGmailError(null)
+          setStatusMessage({ text: data?.message ?? 'Gmail connected successfully', type: 'success' })
+        }
+      } else {
+        const errorMsg = result?.error ?? result?.response?.message ?? ''
+        const rawResponse = result?.raw_response ?? ''
+
+        // Check raw response for auth URLs too
+        const rawAuthUrl = extractAuthUrl(errorMsg + ' ' + rawResponse)
+        if (rawAuthUrl) {
+          setGmailStatus('unknown')
+          setGmailError(null)
+          setStatusMessage({ text: 'Opening Gmail authorization window. Please authorize, then click "Connect Gmail" again.', type: 'info' })
+          window.open(rawAuthUrl, '_blank', 'noopener,noreferrer')
+        } else if (errorMsg.toLowerCase().includes('auth') || errorMsg.toLowerCase().includes('connect') || errorMsg.toLowerCase().includes('permission')) {
+          setGmailStatus('unknown')
+          setGmailError('Gmail authorization is required. Please try clicking "Connect Gmail" again -- the agent should provide an authorization link.')
         } else {
           setGmailStatus('error')
           setGmailError(errorMsg || 'Failed to connect. Please try again.')
         }
-        setStatusMessage({ text: errorMsg || 'Gmail connection requires authorization', type: 'error' })
+        setStatusMessage({ text: errorMsg || 'Gmail connection issue detected', type: 'error' })
       }
     } catch (err) {
       setGmailStatus('error')
@@ -1255,16 +1332,24 @@ export default function Page() {
                         <div className="space-y-2">
                           <div className="flex items-start gap-2">
                             <div className="h-5 w-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs flex-shrink-0 mt-0.5">1</div>
-                            <p className="text-sm text-muted-foreground">Click "Connect Gmail" below to initiate the connection</p>
+                            <p className="text-sm text-muted-foreground">Click "Connect Gmail" below -- this triggers the AI agent to access Gmail via Composio</p>
                           </div>
                           <div className="flex items-start gap-2">
                             <div className="h-5 w-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs flex-shrink-0 mt-0.5">2</div>
-                            <p className="text-sm text-muted-foreground">If prompted, authorize Gmail access in the popup window</p>
+                            <p className="text-sm text-muted-foreground">A new window will open for Google OAuth authorization -- sign in and grant access</p>
                           </div>
                           <div className="flex items-start gap-2">
                             <div className="h-5 w-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs flex-shrink-0 mt-0.5">3</div>
-                            <p className="text-sm text-muted-foreground">Once authorized, all features (Fetch, Copilot, Follow-Up) will work automatically</p>
+                            <p className="text-sm text-muted-foreground">After authorizing, come back here and click "Connect Gmail" again to verify the connection</p>
                           </div>
+                          <div className="flex items-start gap-2">
+                            <div className="h-5 w-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs flex-shrink-0 mt-0.5">4</div>
+                            <p className="text-sm text-muted-foreground">Once connected, all features (Fetch, Copilot, Follow-Up, Schedule) will work automatically</p>
+                          </div>
+                        </div>
+                        <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                          <HiOutlineBell className="h-3 w-3 inline mr-1" />
+                          <strong>Note:</strong> If no authorization window opens, check your browser&apos;s popup blocker settings and allow popups from this site.
                         </div>
                       </div>
                     )}
