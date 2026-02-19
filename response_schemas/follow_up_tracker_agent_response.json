@@ -1,0 +1,64 @@
+{
+  "agent_name": "Follow-Up Tracker Agent",
+  "agent_id": "69976a212d97052a26fc9891",
+  "description": "Scans inbox to identify emails needing follow-up (unanswered after configurable days, pending commitments, question-based emails, manually flagged). Generates draft follow-up content on reminder dates. Manages reminder scheduling.",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "result": {
+      "follow_up_items": [
+        {
+          "email_subject": "string",
+          "sender": "string",
+          "last_activity": "string",
+          "category": "string",
+          "reason": "string",
+          "days_waiting": "number",
+          "thread_id": "string",
+          "has_reminder": "boolean",
+          "reminder_date": "string",
+          "draft_content": "string"
+        }
+      ],
+      "total_count": "number",
+      "categories_summary": {
+        "unanswered": "number",
+        "commitments": "number",
+        "questions": "number",
+        "flagged": "number"
+      },
+      "scan_timestamp": "string",
+      "status": "string",
+      "message": "string"
+    }
+  },
+  "example_response": {
+    "result": {
+      "follow_up_items": [
+        {
+          "email_subject": "Subject of the email",
+          "sender": "Sender email address",
+          "last_activity": "Timestamp of last activity in the thread",
+          "category": "Category: unanswered, commitment, question, or flagged",
+          "reason": "Why this email needs follow-up",
+          "days_waiting": 0,
+          "thread_id": "Gmail thread ID",
+          "has_reminder": false,
+          "reminder_date": "Date of the reminder if set",
+          "draft_content": "Draft follow-up content if reminder is due"
+        }
+      ],
+      "total_count": 0,
+      "categories_summary": {
+        "unanswered": 0,
+        "commitments": 0,
+        "questions": 0,
+        "flagged": 0
+      },
+      "scan_timestamp": "When the scan was performed",
+      "status": "Status of the scan operation",
+      "message": "Summary message about the scan results"
+    }
+  }
+}

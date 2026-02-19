@@ -1,0 +1,26 @@
+{
+  "project_name": "Gmail Intelligence Hub",
+  "created_at": "2026-02-19T19:53:00Z",
+  "agent_ids": {
+    "email_copilot_agent": "69976a22d3c472bb58ec2613",
+    "followup_tracker_agent": "69976a212d97052a26fc9891"
+  },
+  "schedule_ids": {
+    "followup_tracker_daily_scan": "69976a2d399dfadeac37bbbc"
+  },
+  "schedules": [
+    {
+      "schedule_id": "69976a2d399dfadeac37bbbc",
+      "agent_id": "69976a212d97052a26fc9891",
+      "agent_name": "Follow-Up Tracker Agent",
+      "cron_expression": "0 8 * * *",
+      "timezone": "America/New_York",
+      "message": "Scan my inbox for emails that need follow-up. Check for unanswered emails older than 3 days, pending commitments, open questions, and flagged items. Generate draft follow-up content for any items with reminders due today.",
+      "is_active": true,
+      "next_run_time": "2026-02-20T08:00:00-05:00"
+    }
+  ],
+  "rag_ids": {},
+  "workflow_pattern": "independent",
+  "total_agents": 2
+}

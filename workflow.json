@@ -1,0 +1,95 @@
+{
+  "name": "Gmail Intelligence Hub",
+  "description": "Dual-agent Gmail productivity platform with email drafting copilot and follow-up tracking",
+  "nodes": [
+    {
+      "id": "input_node",
+      "type": "Input",
+      "label": "User Query",
+      "nodeCategory": "input"
+    },
+    {
+      "id": "email_copilot_agent",
+      "type": "Agent",
+      "label": "Email Copilot Agent",
+      "nodeCategory": "agent"
+    },
+    {
+      "id": "followup_tracker_agent",
+      "type": "Agent",
+      "label": "Follow-Up Tracker Agent",
+      "nodeCategory": "agent"
+    },
+    {
+      "id": "output_copilot",
+      "type": "Output",
+      "label": "Draft Output",
+      "nodeCategory": "end"
+    },
+    {
+      "id": "output_tracker",
+      "type": "Output",
+      "label": "Follow-Up Results",
+      "nodeCategory": "end"
+    },
+    {
+      "id": "scheduler_node",
+      "type": "Conditional",
+      "label": "Scheduled: Daily at 8:00 AM ET",
+      "nodeCategory": "conditional"
+    }
+  ],
+  "edges": [
+    { "source": "input_node", "target": "email_copilot_agent" },
+    { "source": "input_node", "target": "followup_tracker_agent" },
+    { "source": "email_copilot_agent", "target": "output_copilot" },
+    { "source": "followup_tracker_agent", "target": "output_tracker" },
+    { "source": "scheduler_node", "target": "followup_tracker_agent" }
+  ],
+  "agents": [
+    {
+      "agent_id": "69976a22d3c472bb58ec2613",
+      "name": "Email Copilot Agent",
+      "description": "Parses full email thread context, generates professional reply/follow-up drafts in a sales-director tone, and supports multi-turn conversational refinement. Handles sending finalized drafts via Gmail.",
+      "agent_type": "independent",
+      "provider_id": "openai",
+      "model": "gpt-4.1",
+      "temperature": 0.5,
+      "top_p": 0.95,
+      "tools": ["GMAIL_FETCH_EMAILS", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", "GMAIL_SEND_EMAIL", "GMAIL_REPLY_TO_THREAD", "GMAIL_CREATE_EMAIL_DRAFT"],
+      "tool_source": "composio",
+      "capabilities": {
+        "image_output": false,
+        "voice": false,
+        "file_output": false
+      },
+      "trigger": "Open Copilot on Inbox View"
+    },
+    {
+      "agent_id": "69976a212d97052a26fc9891",
+      "name": "Follow-Up Tracker Agent",
+      "description": "Scans inbox to identify emails needing follow-up (unanswered after configurable days, pending commitments, question-based emails, manually flagged). Generates draft follow-up content on reminder dates. Manages reminder scheduling.",
+      "agent_type": "independent",
+      "provider_id": "openai",
+      "model": "gpt-4.1",
+      "temperature": 0.4,
+      "top_p": 0.95,
+      "tools": ["GMAIL_FETCH_EMAILS", "GMAIL_LIST_THREADS", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", "GMAIL_CREATE_EMAIL_DRAFT"],
+      "tool_source": "composio",
+      "capabilities": {
+        "image_output": false,
+        "voice": false,
+        "file_output": false
+      },
+      "trigger": "Scan Inbox on Follow-Up Hub + Scheduled Daily at 8:00 AM ET",
+      "schedule": {
+        "schedule_id": "69976a2d399dfadeac37bbbc",
+        "cron_expression": "0 8 * * *",
+        "timezone": "America/New_York",
+        "message": "Scan my inbox for emails that need follow-up. Check for unanswered emails older than 3 days, pending commitments, open questions, and flagged items. Generate draft follow-up content for any items with reminders due today.",
+        "is_active": true,
+        "next_run_time": "2026-02-20T08:00:00-05:00"
+      }
+    }
+  ]
+}
