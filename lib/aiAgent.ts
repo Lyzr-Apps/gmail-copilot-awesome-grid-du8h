@@ -98,6 +98,19 @@ export async function callAIAgent(
       }),
     })
 
+    // fetchWrapper may return undefined on 500/network errors
+    if (!response) {
+      return {
+        success: false,
+        response: {
+          status: 'error',
+          result: {},
+          message: 'Server returned no response. The API may be temporarily unavailable.',
+        },
+        error: 'Server returned no response. The API may be temporarily unavailable.',
+      }
+    }
+
     const data = await response.json()
     return data
   } catch (error) {

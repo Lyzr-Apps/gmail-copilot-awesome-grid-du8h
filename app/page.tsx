@@ -372,13 +372,20 @@ export default function Page() {
       const result = await callAIAgent(msg, COPILOT_AGENT_ID, { session_id: sessionId })
       agentActivity.setProcessing(false)
 
-      // Check for auth URLs in the response
-      const rawStr = JSON.stringify(result ?? '')
-      const authUrl = extractAuthUrl(rawStr)
-      if (authUrl) {
+      if (!result) {
+        setStatusMessage({ text: 'Server connection failed. Please try again.', type: 'error' })
+        setFetchingEmails(false)
+        setActiveAgentId(null)
+        return
+      }
+
+      // Check for auth URLs in the response text only
+      const fetchResponseText = [result?.response?.message ?? '', result?.raw_response ?? '', result?.error ?? '', typeof result?.response?.result === 'string' ? result.response.result : (result?.response?.result?.text ?? '')].join(' ')
+      const fetchAuthUrl = extractAuthUrl(fetchResponseText)
+      if (fetchAuthUrl) {
         setGmailStatus('unknown')
         setStatusMessage({ text: 'Gmail authorization needed. Opening authorization window...', type: 'info' })
-        window.open(authUrl, '_blank', 'noopener,noreferrer')
+        window.open(fetchAuthUrl, '_blank', 'noopener,noreferrer')
         setFetchingEmails(false)
         setActiveAgentId(null)
         return
@@ -569,9 +576,16 @@ export default function Page() {
       )
       agentActivity.setProcessing(false)
 
-      // Check for auth URLs in the response
-      const rawScanStr = JSON.stringify(result ?? '')
-      const scanAuthUrl = extractAuthUrl(rawScanStr)
+      if (!result) {
+        setStatusMessage({ text: 'Server connection failed. Please try again.', type: 'error' })
+        setScanningFollowUps(false)
+        setActiveAgentId(null)
+        return
+      }
+
+      // Check for auth URLs in the response text only
+      const scanResponseText = [result?.response?.message ?? '', result?.raw_response ?? '', result?.error ?? '', typeof result?.response?.result === 'string' ? result.response.result : (result?.response?.result?.text ?? '')].join(' ')
+      const scanAuthUrl = extractAuthUrl(scanResponseText)
       if (scanAuthUrl) {
         setGmailStatus('unknown')
         setStatusMessage({ text: 'Gmail authorization needed. Opening authorization window...', type: 'info' })
@@ -714,21 +728,28 @@ export default function Page() {
   }
 
   // ---- Gmail Connection handler ----
-  // Helper to find auth/composio URLs in agent responses
+  // Helper to find Composio auth URLs in agent responses
+  // Only matches URLs that are clearly Composio OAuth or Google OAuth redirects
   const extractAuthUrl = (text: string): string | null => {
     if (!text) return null
-    // Match URLs that are likely Composio or Google OAuth auth flows
-    const urlRegex = /(https?:\/\/[^\s"'<>]+(?:composio|accounts\.google\.com|oauth|auth|connect|redirect)[^\s"'<>]*)/gi
-    const match = text.match(urlRegex)
-    if (match && match.length > 0) return match[0]
-    // Also check for any generic URL that might be a redirect
-    const genericUrlRegex = /(https?:\/\/[^\s"'<>]{20,})/gi
-    const genericMatch = text.match(genericUrlRegex)
-    if (genericMatch && genericMatch.length > 0) {
-      // Check if it looks like an auth URL
-      const url = genericMatch[0].toLowerCase()
-      if (url.includes('auth') || url.includes('oauth') || url.includes('connect') || url.includes('composio') || url.includes('google.com')) {
-        return genericMatch[0]
+    // Only match specific OAuth/Composio patterns - avoid false positives
+    const patterns = [
+      // Composio connect URL
+      /(https?:\/\/[^\s"'<>\]})]+composio\.dev[^\s"'<>\]})]*)/gi,
+      // Google OAuth consent screen
+      /(https?:\/\/accounts\.google\.com\/o\/oauth[^\s"'<>\]})]*)/gi,
+      // Composio backend auth
+      /(https?:\/\/[^\s"'<>\]})]*composio[^\s"'<>\]})]*\/auth[^\s"'<>\]})]*)/gi,
+      // Generic OAuth redirect with code/state params
+      /(https?:\/\/[^\s"'<>\]})]+[?&](?:code|state|redirect_uri)=[^\s"'<>\]})]*)/gi,
+    ]
+    for (const regex of patterns) {
+      const match = text.match(regex)
+      if (match && match.length > 0) {
+        // Filter out known non-auth URLs
+        const url = match[0]
+        if (url.includes('agent-prod.studio.lyzr.ai') || url.includes('rag-prod.studio.lyzr.ai')) continue
+        return url
       }
     }
     return null
@@ -746,12 +767,24 @@ export default function Page() {
         { session_id: generateSessionId() }
       )
 
-      // Deep-search the entire response for auth URLs
-      const rawStr = JSON.stringify(result ?? '')
-      const authUrl = extractAuthUrl(rawStr)
+      // If result is null/undefined (fetchWrapper swallowed an error)
+      if (!result) {
+        setGmailStatus('error')
+        setGmailError('Could not reach the server. Please check your connection and try again.')
+        setStatusMessage({ text: 'Server connection failed', type: 'error' })
+        setGmailConnecting(false)
+        return
+      }
+
+      // Search only the meaningful response text for auth URLs (not the whole JSON)
+      const responseText = result?.response?.message ?? ''
+      const resultText = typeof result?.response?.result === 'string' ? result.response.result : (result?.response?.result?.text ?? result?.response?.result?.message ?? '')
+      const rawText = result?.raw_response ?? ''
+      const errorText = result?.error ?? ''
+      const searchable = [responseText, resultText, rawText, errorText].join(' ')
+      const authUrl = extractAuthUrl(searchable)
 
       if (authUrl) {
-        // Agent returned an auth URL - open it for the user
         setGmailStatus('unknown')
         setGmailError(null)
         setStatusMessage({ text: 'Opening Gmail authorization window. Please authorize access, then click "Connect Gmail" again.', type: 'info' })
@@ -761,13 +794,13 @@ export default function Page() {
       }
 
       const data = parseAgentResult(result)
-      if (data || result?.success) {
-        // Check if the response message itself mentions needing auth
-        const msgText = (data?.message ?? data?.text ?? result?.response?.message ?? '').toLowerCase()
-        if (msgText.includes('authenticate') || msgText.includes('authorize') || msgText.includes('permission') || msgText.includes('connect your') || msgText.includes('not connected')) {
+      if (result?.success) {
+        // Check if the response message mentions needing auth
+        const msgText = (data?.message ?? data?.text ?? responseText ?? '').toLowerCase()
+        if (msgText.includes('authenticate') || msgText.includes('authorize') || msgText.includes('not connected') || msgText.includes('initiate a connection') || msgText.includes('no connected account')) {
           setGmailStatus('unknown')
-          setGmailError('Gmail authorization may be needed. The agent reported: ' + (data?.message ?? data?.text ?? 'authorization required'))
-          setStatusMessage({ text: 'Gmail needs authorization. Check the message below.', type: 'info' })
+          setGmailError('Gmail authorization is needed. The agent reported: ' + (data?.message ?? data?.text ?? responseText ?? 'authorization required'))
+          setStatusMessage({ text: 'Gmail authorization needed. See details below.', type: 'info' })
         } else {
           setGmailStatus('connected')
           setGmailError(null)
@@ -775,23 +808,15 @@ export default function Page() {
         }
       } else {
         const errorMsg = result?.error ?? result?.response?.message ?? ''
-        const rawResponse = result?.raw_response ?? ''
-
-        // Check raw response for auth URLs too
-        const rawAuthUrl = extractAuthUrl(errorMsg + ' ' + rawResponse)
-        if (rawAuthUrl) {
+        if (errorMsg.toLowerCase().includes('auth') || errorMsg.toLowerCase().includes('not connected') || errorMsg.toLowerCase().includes('initiate') || errorMsg.toLowerCase().includes('no connected account')) {
           setGmailStatus('unknown')
-          setGmailError(null)
-          setStatusMessage({ text: 'Opening Gmail authorization window. Please authorize, then click "Connect Gmail" again.', type: 'info' })
-          window.open(rawAuthUrl, '_blank', 'noopener,noreferrer')
-        } else if (errorMsg.toLowerCase().includes('auth') || errorMsg.toLowerCase().includes('connect') || errorMsg.toLowerCase().includes('permission')) {
-          setGmailStatus('unknown')
-          setGmailError('Gmail authorization is required. Please try clicking "Connect Gmail" again -- the agent should provide an authorization link.')
+          setGmailError('Gmail authorization is needed. The agent reported: ' + errorMsg)
+          setStatusMessage({ text: 'Gmail authorization is needed -- check the message below.', type: 'info' })
         } else {
           setGmailStatus('error')
           setGmailError(errorMsg || 'Failed to connect. Please try again.')
+          setStatusMessage({ text: errorMsg || 'Gmail connection failed', type: 'error' })
         }
-        setStatusMessage({ text: errorMsg || 'Gmail connection issue detected', type: 'error' })
       }
     } catch (err) {
       setGmailStatus('error')

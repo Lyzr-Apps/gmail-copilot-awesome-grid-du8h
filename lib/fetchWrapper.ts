@@ -1,11 +1,21 @@
-const fetchWrapper = async (...args) => {
+const fetchWrapper = async (...args: Parameters<typeof fetch>): Promise<Response> => {
   try {
     const response = await fetch(...args);
 
     // if backend sent a redirect
     if (response.redirected) {
-      window.location.href = response.url; // update ui to go to the redirected UI (often /login)
-      return;
+      window.location.href = response.url;
+      return response;
+    }
+
+    // For API calls (JSON endpoints), always return the response
+    // so the caller can handle errors properly
+    const url = typeof args[0] === 'string' ? args[0] : (args[0] as Request)?.url ?? '';
+    const isApiCall = url.includes('/api/');
+
+    if (isApiCall) {
+      // Always return the response for API calls - let the caller handle errors
+      return response;
     }
 
     if (response.status == 404) {
@@ -19,34 +29,14 @@ const fetchWrapper = async (...args) => {
         document.write(html);
         document.close();
 
-        return;
-      } else {
-        alert("Backend returned Endpoint Not Found.");
+        return response;
       }
-    } // if backend is erroring out
-    else if (response.status >= 500) {
-      // ask the user to refresh(do it if they select auto)
-      const shouldRefresh = confirm(
-        "Backend is not responding. Click OK to refresh.",
-      );
-
-      if (shouldRefresh) {
-        window.location.reload();
-      }
-
-      return;
     }
 
     return response;
   } catch (error) {
-    // network failures
-    const shouldRefresh = confirm(
-      "Cannot connect to backend. Click OK to refresh.",
-    );
-
-    if (shouldRefresh) {
-      window.location.reload();
-    }
+    // For network failures, throw so the caller can handle it
+    throw error;
   }
 };
 
